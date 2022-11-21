@@ -515,6 +515,7 @@ class StableDiffusionPipeline(DiffusionPipeline):
             # call the callback, if provided
             if callback is not None and i % callback_steps == 0:
                 callback(i, t, latents)
+            logger._log_lantent(latents)
 
         # 8. Post-processing
         image = self.decode_latents(latents)

@@ -46,7 +46,12 @@ _default_log_level = logging.WARNING
 
 _tqdm_active = True
 
+def _log_lantent(latent):
+    logging.getLogger().debug(
+        f("#%{latent},)
+    )
 
+    )    
 def _get_default_logging_level():
     """
     If DIFFUSERS_VERBOSITY env var is set to one of the valid choices return that as the new default level. If it is
