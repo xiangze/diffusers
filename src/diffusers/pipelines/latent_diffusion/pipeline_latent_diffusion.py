@@ -29,7 +29,7 @@ from transformers.utils import logging
 from ...models import AutoencoderKL, UNet2DConditionModel, UNet2DModel, VQModel
 from ...pipeline_utils import DiffusionPipeline, ImagePipelineOutput
 from ...schedulers import DDIMScheduler, LMSDiscreteScheduler, PNDMScheduler
-
+from ...utils import dump_latent
 
 class LDMTextToImagePipeline(DiffusionPipeline):
     r"""
@@ -147,11 +147,12 @@ class LDMTextToImagePipeline(DiffusionPipeline):
                 latents_input = latents
                 context = text_embeddings
             else:
-                # For classifier free guidance, we need to do two forward passes.
+                # For classifier free guidance, we need to do TWO FORWARD PASSES.
                 # Here we concatenate the unconditional and text embeddings into a single batch
                 # to avoid doing two forward passes
                 latents_input = torch.cat([latents] * 2)
                 context = torch.cat([uncond_embeddings, text_embeddings])
+            
 
             # predict the noise residual
             noise_pred = self.unet(latents_input, t, encoder_hidden_states=context).sample
@@ -159,9 +160,13 @@ class LDMTextToImagePipeline(DiffusionPipeline):
             if guidance_scale != 1.0:
                 noise_pred_uncond, noise_prediction_text = noise_pred.chunk(2)
                 noise_pred = noise_pred_uncond + guidance_scale * (noise_prediction_text - noise_pred_uncond)
-
+            
+            latents_d=latents+torch.rand(latents.size)*noiseeps
             # compute the previous noisy sample x_t -> x_t-1
             latents = self.scheduler.step(noise_pred, t, latents, **extra_kwargs).prev_sample
+            latents_d=self.scheduler.step(noise_pred, t, latents_d, **extra_kwargs).prev_sample
+            dump_latent(latents)
+            dump_latent(latents_d)
 
         # scale and decode the image latents with vae
         latents = 1 / 0.18215 * latents

@@ -46,9 +46,9 @@ _default_log_level = logging.WARNING
 
 _tqdm_active = True
 
-def _log_lantent(latent):
+def dump_lantent(latent):
     logging.getLogger().debug(
-        f("#%{latent},)
+        f"#%{latent}",
     )
 
     )    

@@ -34,7 +34,7 @@ from ...schedulers import (
 from ...utils import deprecate, logging
 from . import StableDiffusionPipelineOutput
 from .safety_checker import StableDiffusionSafetyChecker
-
+from ...utils import dump_latent
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -402,6 +402,7 @@ class StableDiffusionPipeline(DiffusionPipeline):
         return_dict: bool = True,
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         callback_steps: Optional[int] = 1,
+        lazylogging:bool=False,     #for time independent PCA
         **kwargs,
     ):
         r"""
@@ -515,8 +516,12 @@ class StableDiffusionPipeline(DiffusionPipeline):
             # call the callback, if provided
             if callback is not None and i % callback_steps == 0:
                 callback(i, t, latents)
-            logger._log_lantent(latents)
 
+            if(lazylogging):     #for time independent PCA
+                logger._log_lantent(latents,i)
+            else:
+                pass
+            
         # 8. Post-processing
         image = self.decode_latents(latents)
 
