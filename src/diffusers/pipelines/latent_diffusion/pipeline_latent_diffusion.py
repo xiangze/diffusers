@@ -28,8 +28,7 @@ from transformers.utils import logging
 
 from ...models import AutoencoderKL, UNet2DConditionModel, UNet2DModel, VQModel
 from ...pipeline_utils import DiffusionPipeline, ImagePipelineOutput
-from ...schedulers import DDIMScheduler, LMSDiscreteScheduler, PNDMScheduler
-
+from ...schedulers import DDIMScheduler, LMSDiscreteScheduler, PNDMScheduler, SGHMCScheduler 
 
 class LDMTextToImagePipeline(DiffusionPipeline):
     r"""
@@ -56,7 +55,7 @@ class LDMTextToImagePipeline(DiffusionPipeline):
         bert: PreTrainedModel,
         tokenizer: PreTrainedTokenizer,
         unet: Union[UNet2DModel, UNet2DConditionModel],
-        scheduler: Union[DDIMScheduler, PNDMScheduler, LMSDiscreteScheduler],
+        scheduler: Union[DDIMScheduler, PNDMScheduler, LMSDiscreteScheduler,SGHMCScheduler],
     ):
         super().__init__()
         self.register_modules(vqvae=vqvae, bert=bert, tokenizer=tokenizer, unet=unet, scheduler=scheduler)

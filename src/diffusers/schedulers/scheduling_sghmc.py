@@ -218,6 +218,7 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
         model_output: torch.FloatTensor,
         timestep: int,
         sample: torch.FloatTensor,
+        p: torch.FloatTensor,
         generator=None,
         return_dict: bool = True,
         **kwargs,
@@ -281,7 +282,9 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
 
         # 5. Compute predicted previous sample µ_t
         # See formula (7) from https://arxiv.org/pdf/2006.11239.pdf
-        pred_prev_sample = pred_original_sample_coeff * pred_original_sample + current_sample_coeff * sample
+
+        # position
+        pred_prev_sample = (pred_original_sample_coeff * pred_original_sample + current_sample_coeff * sample )+p
 
         # 6. Add noise
         variance = 0
@@ -296,20 +299,20 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
                     model_output.shape, generator=generator, device=device, dtype=model_output.dtype
                 )
             if self.variance_type == "fixed_small_log":
-                variance = self._get_variance(t, predicted_variance=predicted_variance) * variance_noise
+                dump_coef= self._get_variance(t, predicted_variance=predicted_variance)
+                variance = dump_coef* variance_noise
             else:
-                variance = (self._get_variance(t, predicted_variance=predicted_variance) ** 0.5) * variance_noise
+                dump_coef= self._get_variance(t, predicted_variance=predicted_variance)
+                variance = (dump_coef ** 0.5) * variance_noise
 
-        # momentum and position
-        p=pred_prev_sample + variance -dump_coef *p
-        pred_prev_sample =pred_prev_sample + p
-
+        # momentum 
+        p= p -dump_coef *p +pred_prev_sample + variance 
         # no Metropolis selection
-        
+       
         if not return_dict:
-            return (pred_prev_sample,)
+            return (pred_prev_sample,p)
 
-        return SGHMCSchedulerOutput(prev_sample=pred_prev_sample, pred_original_sample=pred_original_sample)
+        return SGHMCSchedulerOutput(prev_sample=pred_prev_sample, momentum=p,pred_original_sample=pred_original_sample)
 
     def add_noise(
         self,

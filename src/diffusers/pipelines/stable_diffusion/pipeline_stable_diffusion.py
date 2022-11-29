@@ -30,11 +30,12 @@ from ...schedulers import (
     EulerDiscreteScheduler,
     LMSDiscreteScheduler,
     PNDMScheduler,
+    SGHMCScheduler,
 )
 from ...utils import deprecate, logging
 from . import StableDiffusionPipelineOutput
 from .safety_checker import StableDiffusionSafetyChecker
-
+#from ...utils import dump_latent
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -402,6 +403,7 @@ class StableDiffusionPipeline(DiffusionPipeline):
         return_dict: bool = True,
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         callback_steps: Optional[int] = 1,
+        lazylogging:bool=False,     #for time independent PCA
         **kwargs,
     ):
         r"""
@@ -494,6 +496,8 @@ class StableDiffusionPipeline(DiffusionPipeline):
 
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
+        if(isinstance(self.scheduler)==SGHMCScheduler):
+            p=torch.randn(latents.shape, dtype=latents.dtype, generator=generator)
 
         # 7. Denoising loop
         for i, t in enumerate(self.progress_bar(timesteps)):
@@ -510,11 +514,20 @@ class StableDiffusionPipeline(DiffusionPipeline):
                 noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
             # compute the previous noisy sample x_t -> x_t-1
-            latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
+            if(isinstance(self.scheduler)==SGHMCScheduler):
+                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
+            else:
+                latents = self.scheduler.step(noise_pred, t, latents, p **extra_step_kwargs).prev_sample
 
             # call the callback, if provided
             if callback is not None and i % callback_steps == 0:
                 callback(i, t, latents)
+
+
+            if(lazylogging):     #for time independent PCA
+                logger._log_lantent(latents,i)
+            else:
+                pass
 
         # 8. Post-processing
         image = self.decode_latents(latents)

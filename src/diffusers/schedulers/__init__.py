@@ -30,6 +30,7 @@ if is_torch_available():
     from .scheduling_sde_vp import ScoreSdeVpScheduler
     from .scheduling_utils import SchedulerMixin
     from .scheduling_vq_diffusion import VQDiffusionScheduler
+    from .scheduling_sghmc import SGHMCScheduler
 else:
     from ..utils.dummy_pt_objects import *  # noqa F403
 
