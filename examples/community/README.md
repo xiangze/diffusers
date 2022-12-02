@@ -21,6 +21,8 @@ If a community doesn't work as expected, please open an issue and ping the autho
 | Multilingual Stable Diffusion| Stable Diffusion Pipeline that supports prompts in 50 different languages.                                                                                                                                                                                                                                                                                                     | [Multilingual Stable Diffusion](#multilingual-stable-diffusion-pipeline)                                                                 | -                                                                                                                                                                                                                  |                        [Juan Carlos Piñeros](https://github.com/juancopi81) |
 | Image to Image Inpainting Stable Diffusion | Stable Diffusion Pipeline that enables the overlaying of two images and subsequent inpainting| [Image to Image Inpainting Stable Diffusion](#image-to-image-inpainting-stable-diffusion)                                                                 | -                                                                                                                                                                                                                  |                        [Alex McKinney](https://github.com/vvvm23) |
 | Text Based Inpainting Stable Diffusion | Stable Diffusion Inpainting Pipeline that enables passing a text prompt to generate the mask for inpainting| [Text Based Inpainting Stable Diffusion](#image-to-image-inpainting-stable-diffusion)                                                                 | -                                                                                                                                                                                                                  |                        [Dhruv Karan](https://github.com/unography) |
+| Bit Diffusion | Diffusion on discrete data | [Bit Diffusion](#bit-diffusion) | -  |[Stuti R.](https://github.com/kingstut) |
+| K-Diffusion Stable Diffusion | Run Stable Diffusion with any of [K-Diffusion's samplers](https://github.com/crowsonkb/k-diffusion/blob/master/k_diffusion/sampling.py) | [Stable Diffusion with K Diffusion](#stable-diffusion-with-k-diffusion) | -  | [Patrick von Platen](https://github.com/patrickvonplaten/) |
 
 
 
@@ -164,7 +166,7 @@ init_image = download_image("https://raw.githubusercontent.com/CompVis/stable-di
 
 prompt = "A fantasy landscape, trending on artstation"
 
-images = pipe.img2img(prompt=prompt, init_image=init_image, strength=0.75, guidance_scale=7.5).images
+images = pipe.img2img(prompt=prompt, image=init_image, strength=0.75, guidance_scale=7.5).images
 
 ### Inpainting
 
@@ -174,7 +176,7 @@ init_image = download_image(img_url).resize((512, 512))
 mask_image = download_image(mask_url).resize((512, 512))
 
 prompt = "a cat sitting on a bench"
-images = pipe.inpaint(prompt=prompt, init_image=init_image, mask_image=mask_image, strength=0.75).images
+images = pipe.inpaint(prompt=prompt, image=init_image, mask_image=mask_image, strength=0.75).images
 ```
 
 As shown above this one pipeline can run all both "text-to-image", "image-to-image", and "inpainting" in one pipeline.
@@ -343,7 +345,6 @@ out = pipe(
 )
 ```
 
-
 ### Composable Stable diffusion 
 
 [Composable Stable Diffusion](https://energy-based-model.github.io/Compositional-Visual-Generation-with-Composable-Diffusion-Models/) proposes conjunction and negation (negative prompts) operators for compositional generation with conditional diffusion models.
@@ -370,7 +371,7 @@ def dummy(images, **kwargs):
 pipe.safety_checker = dummy
 
 images = []
-generator = th.Generator("cuda").manual_seed(0)
+generator = torch.Generator("cuda").manual_seed(0)
 
 seed = 0
 prompt = "a forest | a camel"
@@ -399,6 +400,7 @@ import requests
 from PIL import Image
 from io import BytesIO
 import torch
+import os
 from diffusers import DiffusionPipeline, DDIMScheduler
 has_cuda = torch.cuda.is_available()
 device = torch.device('cpu' if not has_cuda else 'cuda')
@@ -409,7 +411,7 @@ pipe = DiffusionPipeline.from_pretrained(
     custom_pipeline="imagic_stable_diffusion",
     scheduler = DDIMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
 ).to(device)
-generator = th.Generator("cuda").manual_seed(0)
+generator = torch.Generator("cuda").manual_seed(0)
 seed = 0
 prompt = "A photo of Barack Obama smiling with a big grin"
 url = 'https://www.dropbox.com/s/6tlwzr73jd1r9yk/obama.png?dl=1'
@@ -418,17 +420,16 @@ init_image = Image.open(BytesIO(response.content)).convert("RGB")
 init_image = init_image.resize((512, 512))
 res = pipe.train(
     prompt,
-    init_image,
-    guidance_scale=7.5,
-    num_inference_steps=50,
+    image=init_image,
     generator=generator)
-res = pipe(alpha=1)
+res = pipe(alpha=1, guidance_scale=7.5, num_inference_steps=50)
+os.makedirs("imagic", exist_ok=True)
 image = res.images[0]
 image.save('./imagic/imagic_image_alpha_1.png')
-res = pipe(alpha=1.5)
+res = pipe(alpha=1.5, guidance_scale=7.5, num_inference_steps=50)
 image = res.images[0]
 image.save('./imagic/imagic_image_alpha_1_5.png')
-res = pipe(alpha=2)
+res = pipe(alpha=2, guidance_scale=7.5, num_inference_steps=50)
 image = res.images[0]
 image.save('./imagic/imagic_image_alpha_2.png')
 ```
@@ -599,7 +600,7 @@ For example, this could be used to place a logo on a shirt and make it blend sea
 import PIL
 import torch
 
-from diffusers import StableDiffusionInpaintPipeline
+from diffusers import DiffusionPipeline
 
 image_path = "./path-to-image.png"
 inner_image_path = "./path-to-inner-image.png"
@@ -609,16 +610,19 @@ init_image = PIL.Image.open(image_path).convert("RGB").resize((512, 512))
 inner_image = PIL.Image.open(inner_image_path).convert("RGBA").resize((512, 512))
 mask_image = PIL.Image.open(mask_path).convert("RGB").resize((512, 512))
 
-pipe = StableDiffusionInpaintPipeline.from_pretrained(
+pipe = DiffusionPipeline.from_pretrained(
     "runwayml/stable-diffusion-inpainting",
+    custom_pipeline="img2img_inpainting",
     revision="fp16",
-    torch_dtype=torch.float16,
+    torch_dtype=torch.float16
 )
 pipe = pipe.to("cuda")
 
 prompt = "Your prompt here!"
 image = pipe(prompt=prompt, image=init_image, inner_image=inner_image, mask_image=mask_image).images[0]
 ```
+
+![2 by 2 grid demonstrating image to image inpainting.](https://user-images.githubusercontent.com/44398246/203506577-ec303be4-887e-4ebd-a773-c83fcb3dd01a.png)
 
 ### Text Based Inpainting Stable Diffusion
 
@@ -653,3 +657,73 @@ prompt = "a cup"  # the masked out region will be replaced with this
 with autocast("cuda"):
     image = pipe(image=image, text=text, prompt=prompt).images[0]
 ```
+
+### Bit Diffusion 
+Based https://arxiv.org/abs/2208.04202, this is used for diffusion on discrete data - eg, discreate image data, DNA sequence data. An unconditional discreate image can be generated like this: 
+
+```python
+from diffusers import DiffusionPipeline
+pipe = DiffusionPipeline.from_pretrained("google/ddpm-cifar10-32", custom_pipeline="bit_diffusion")
+image = pipe().images[0]
+
+```
+
+### Stable Diffusion with K Diffusion
+
+Make sure you have @crowsonkb's https://github.com/crowsonkb/k-diffusion installed:
+
+```
+pip install k-diffusion
+```
+
+You can use the community pipeline as follows:
+
+```python
+from diffusers import DiffusionPipeline
+
+pipe = DiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4", custom_pipeline="sd_text2img_k_diffusion")
+pipe = pipe.to("cuda")
+
+prompt = "an astronaut riding a horse on mars"
+pipe.set_sampler("sample_heun")
+generator = torch.Generator(device="cuda").manual_seed(seed)
+image = pipe(prompt, generator=generator, num_inference_steps=20).images[0]
+
+image.save("./astronaut_heun_k_diffusion.png")
+```
+
+To make sure that K Diffusion and `diffusers` yield the same results:
+
+**Diffusers**:
+```python
+from diffusers import DiffusionPipeline, EulerDiscreteScheduler
+
+seed = 33
+
+pipe = DiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4")
+pipe.scheduler = EulerDiscreteScheduler.from_config(pipe.scheduler.config)
+pipe = pipe.to("cuda")
+
+generator = torch.Generator(device="cuda").manual_seed(seed)
+image = pipe(prompt, generator=generator, num_inference_steps=50).images[0]
+```
+
+![diffusers_euler](https://huggingface.co/datasets/patrickvonplaten/images/resolve/main/k_diffusion/astronaut_euler.png)
+
+**K Diffusion**:
+```python
+from diffusers import DiffusionPipeline, EulerDiscreteScheduler
+
+seed = 33
+
+pipe = DiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4", custom_pipeline="sd_text2img_k_diffusion")
+pipe.scheduler = EulerDiscreteScheduler.from_config(pipe.scheduler.config)
+pipe = pipe.to("cuda")
+
+pipe.set_sampler("sample_euler")
+generator = torch.Generator(device="cuda").manual_seed(seed)
+image = pipe(prompt, generator=generator, num_inference_steps=50).images[0]
+```
+
+![diffusers_euler](https://huggingface.co/datasets/patrickvonplaten/images/resolve/main/k_diffusion/astronaut_euler_k_diffusion.png)
+

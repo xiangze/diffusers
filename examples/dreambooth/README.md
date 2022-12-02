@@ -19,6 +19,13 @@ And initialize an [🤗Accelerate](https://github.com/huggingface/accelerate/) e
 accelerate config
 ```
 
+Or if your environment doesn't support an interactive shell e.g. a notebook
+
+```python
+from accelerate.utils import write_basic_config
+write_basic_config()
+```
+
 ### Dog toy example
 
 You need to accept the model license before downloading or using the weights. In this example we'll use model version `v1-4`, so you'll need to visit [its card](https://huggingface.co/CompVis/stable-diffusion-v1-4), read the license and tick the checkbox if you agree. 
@@ -38,6 +45,8 @@ If you have already cloned the repo, then you won't need to go through these ste
 Now let's get our dataset. Download images from [here](https://drive.google.com/drive/folders/1BO_dyz-p65qhBRRMRA4TbZ8qW4rB99JZ) and save them in a directory. This will be our training data.
 
 And launch the training using
+
+**___Note: Change the `resolution` to 768 if you are using the [stable-diffusion-2](https://huggingface.co/stabilityai/stable-diffusion-2) 768x768 model.___**
 
 ```bash
 export MODEL_NAME="CompVis/stable-diffusion-v1-4"
@@ -61,7 +70,7 @@ accelerate launch train_dreambooth.py \
 ### Training with prior-preservation loss
 
 Prior-preservation is used to avoid overfitting and language-drift. Refer to the paper to learn more about it. For prior-preservation we first generate images using the model with a class prompt and then use those during training along with our data.
-According to the paper, it's recommended to generate `num_epochs * num_samples` images for prior-preservation. 200-300 works well for most cases.
+According to the paper, it's recommended to generate `num_epochs * num_samples` images for prior-preservation. 200-300 works well for most cases. The `num_class_images` flag sets the number of images to generate with the class prompt. You can place existing images in `class_data_dir`, and the training script will generate any additional images so that `num_class_images` are present in `class_data_dir` during training time.
 
 ```bash
 export MODEL_NAME="CompVis/stable-diffusion-v1-4"
@@ -141,7 +150,7 @@ export INSTANCE_DIR="path-to-instance-images"
 export CLASS_DIR="path-to-class-images"
 export OUTPUT_DIR="path-to-save-model"
 
-accelerate launch train_dreambooth.py \
+accelerate launch --mixed_precision="fp16" train_dreambooth.py \
   --pretrained_model_name_or_path=$MODEL_NAME \
   --instance_data_dir=$INSTANCE_DIR \
   --class_data_dir=$CLASS_DIR \
@@ -157,8 +166,7 @@ accelerate launch train_dreambooth.py \
   --lr_scheduler="constant" \
   --lr_warmup_steps=0 \
   --num_class_images=200 \
-  --max_train_steps=800 \
-  --mixed_precision=fp16
+  --max_train_steps=800
 ```
 
 ### Fine-tune text encoder with the UNet.
@@ -192,6 +200,17 @@ accelerate launch train_dreambooth.py \
   --lr_warmup_steps=0 \
   --num_class_images=200 \
   --max_train_steps=800
+```
+
+### Using DreamBooth for other pipelines than Stable Diffusion
+
+Altdiffusion also support dreambooth now, the runing comman is basically the same as abouve, all you need to do is replace the `MODEL_NAME` like this:
+One can now simply change the `pretrained_model_name_or_path` to another architecture such as [`AltDiffusion`](https://huggingface.co/docs/diffusers/api/pipelines/alt_diffusion).
+
+```
+export MODEL_NAME="CompVis/stable-diffusion-v1-4" --> export MODEL_NAME="BAAI/AltDiffusion-m9"
+or
+export MODEL_NAME="CompVis/stable-diffusion-v1-4" --> export MODEL_NAME="BAAI/AltDiffusion"
 ```
 
 ### Inference
