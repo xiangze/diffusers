@@ -17,7 +17,8 @@ from typing import Callable, List, Optional, Union
 
 import torch
 
-from diffusers.utils import is_accelerate_available
+#from diffusers.utils import is_accelerate_available
+from ...utils import is_accelerate_available
 from packaging import version
 from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
 

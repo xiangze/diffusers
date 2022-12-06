@@ -603,7 +603,9 @@ class DiffusionPipeline(ConfigMixin):
             )
 
         # import it here to avoid circular import
-        from diffusers import pipelines
+        from ..diffusers import pipelines
+        from ..diffusers import onnx_utils
+        from ..diffusers import schedulers
 
         # 3. Load each module in the pipeline
         for name, (library_name, class_name) in init_dict.items():
@@ -679,7 +681,7 @@ class DiffusionPipeline(ConfigMixin):
 
                 if issubclass(class_obj, torch.nn.Module):
                     loading_kwargs["torch_dtype"] = torch_dtype
-                if issubclass(class_obj, diffusers.OnnxRuntimeModel):
+                if issubclass(class_obj, onnx_utils.OnnxRuntimeModel):
                     loading_kwargs["provider"] = provider
                     loading_kwargs["sess_options"] = sess_options
 

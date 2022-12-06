@@ -1,19 +1,14 @@
 from .utils import (
     is_flax_available,
-    is_inflect_available,
     is_onnx_available,
     is_scipy_available,
     is_torch_available,
     is_transformers_available,
-    is_unidecode_available,
 )
 
 
 __version__ = "0.10.0.dev0"
 
-from .configuration_utils import ConfigMixin
-from .onnx_utils import OnnxRuntimeModel
-from .utils import logging
 
 
 if is_torch_available():
@@ -68,22 +63,13 @@ else:
 
 if is_torch_available() and is_transformers_available():
     from .pipelines import (
-        AltDiffusionImg2ImgPipeline,
-        AltDiffusionPipeline,
         CycleDiffusionPipeline,
         LDMTextToImagePipeline,
-        StableDiffusionImageVariationPipeline,
         StableDiffusionImg2ImgPipeline,
         StableDiffusionInpaintPipeline,
         StableDiffusionInpaintPipelineLegacy,
         StableDiffusionPipeline,
         StableDiffusionPipelineSafe,
-        StableDiffusionUpscalePipeline,
-        VersatileDiffusionDualGuidedPipeline,
-        VersatileDiffusionImageVariationPipeline,
-        VersatileDiffusionPipeline,
-        VersatileDiffusionTextToImagePipeline,
-        VQDiffusionPipeline,
     )
 else:
     from .utils.dummy_torch_and_transformers_objects import *  # noqa F403

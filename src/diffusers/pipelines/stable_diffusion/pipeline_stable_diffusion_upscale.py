@@ -19,7 +19,7 @@ import numpy as np
 import torch
 
 import PIL
-from diffusers.utils import is_accelerate_available
+from ...utils import is_accelerate_available
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from ...models import AutoencoderKL, UNet2DConditionModel
