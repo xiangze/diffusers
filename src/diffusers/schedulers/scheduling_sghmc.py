@@ -218,7 +218,7 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
         model_output: torch.FloatTensor,
         timestep: int,
         sample: torch.FloatTensor,
-        p: torch.FloatTensor,
+        p: torch.FloatTensor=None,
         generator=None,
         return_dict: bool = True,
         **kwargs,
