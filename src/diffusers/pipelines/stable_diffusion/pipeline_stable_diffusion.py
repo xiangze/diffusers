@@ -83,6 +83,7 @@ class StableDiffusionPipeline(DiffusionPipeline):
             EulerDiscreteScheduler,
             EulerAncestralDiscreteScheduler,
             DPMSolverMultistepScheduler,
+            SGHMCScheduler,
         ],
         safety_checker: StableDiffusionSafetyChecker,
         feature_extractor: CLIPFeatureExtractor,
@@ -539,8 +540,10 @@ class StableDiffusionPipeline(DiffusionPipeline):
 
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
-        if(isinstance(self.scheduler)==SGHMCScheduler):
+        if(isinstance(self.scheduler,SGHMCScheduler)):
             p=torch.randn(latents.shape, dtype=latents.dtype, generator=generator)
+            p=p.to(device)
+            
 
         # 7. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
@@ -559,10 +562,10 @@ class StableDiffusionPipeline(DiffusionPipeline):
                     noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
                     # compute the previous noisy sample x_t -> x_t-1
-                    if(isinstance(self.scheduler)==SGHMCScheduler):
-                        latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
+                    if(isinstance(self.scheduler,SGHMCScheduler)):
+                        latents = self.scheduler.step(noise_pred, t, latents, p, **extra_step_kwargs).prev_sample
                     else:
-                        latents = self.scheduler.step(noise_pred, t, latents, p **extra_step_kwargs).prev_sample
+                        latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
 
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):

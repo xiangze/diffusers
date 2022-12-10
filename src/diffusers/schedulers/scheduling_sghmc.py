@@ -75,9 +75,9 @@ def betas_for_alpha_bar(num_diffusion_timesteps, max_beta=0.999):
 
 class SGHMCScheduler(SchedulerMixin, ConfigMixin):
     """
-    Denoising diffusion probabilistic models (DDPMs) explores the connections between denoising score matching and
-    Langevin dynamics sampling.
-
+    Stochastic Gradient Hamilton Monte Carlo with Langevin dynamics
+    http://proceedings.mlr.press/v32/cheni14.pdf
+    
     [`~ConfigMixin`] takes care of storing all config attributes that are passed in the scheduler's `__init__`
     function, such as `num_train_timesteps`. They can be accessed via `scheduler.config.num_train_timesteps`.
     [`SchedulerMixin`] provides general loading and saving functionality via the [`SchedulerMixin.save_pretrained`] and
@@ -99,12 +99,14 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
             `fixed_small_log`, `fixed_large`, `fixed_large_log`, `learned` or `learned_range`.
         clip_sample (`bool`, default `True`):
             option to clip predicted sample between -1 and 1 for numerical stability.
-        predict_epsilon (`bool`):
-            optional flag to use when the model predicts the noise (epsilon), or the samples instead of the noise.
-
+        prediction_type (`str`, default `epsilon`, optional):
+            prediction type of the scheduler function, one of `epsilon` (predicting the noise of the diffusion
+            process), `sample` (directly predicting the noisy sample`) or `v_prediction` (see section 2.4
+            https://imagen.research.google/video/paper.pdf)
     """
-
+    order = 2
     _compatibles = _COMPATIBLE_STABLE_DIFFUSION_SCHEDULERS.copy()
+    _deprecated_kwargs = ["predict_epsilon"]
 
     @register_to_config
     def __init__(
@@ -116,8 +118,17 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
         trained_betas: Optional[np.ndarray] = None,
         variance_type: str = "fixed_small",
         clip_sample: bool = True,
-        predict_epsilon: bool = True,
+        prediction_type: str = "epsilon",
+        **kwargs,
     ):
+        message = (
+            "Please make sure to instantiate your scheduler with `prediction_type` instead. E.g. `scheduler ="
+            " DDPMScheduler.from_pretrained(<model_id>, prediction_type='epsilon')`."
+        )
+        predict_epsilon = deprecate("predict_epsilon", "0.11.0", message, take_from=kwargs)
+        if predict_epsilon is not None:
+            self.register_to_config(prediction_type="epsilon" if predict_epsilon else "sample")
+
         if trained_betas is not None:
             self.betas = torch.from_numpy(trained_betas)
         elif beta_schedule == "linear":
@@ -242,13 +253,14 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
 
         """
         message = (
-            "Please make sure to instantiate your scheduler with `predict_epsilon` instead. E.g. `scheduler ="
-            " DDPMScheduler.from_pretrained(<model_id>, predict_epsilon=True)`."
+            "Please make sure to instantiate your scheduler with `prediction_type` instead. E.g. `scheduler ="
+            " SGHMCScheduler.from_pretrained(<model_id>, prediction_type='epsilon')`."
         )
-        predict_epsilon = deprecate("predict_epsilon", "0.10.0", message, take_from=kwargs)
-        if predict_epsilon is not None and predict_epsilon != self.config.predict_epsilon:
+#       predict_epsilon = deprecate("predict_epsilon", "0.10.0", message, take_from=kwargs)
+        predict_epsilon = None
+        if predict_epsilon is not None:
             new_config = dict(self.config)
-            new_config["predict_epsilon"] = predict_epsilon
+            new_config["predict_type"] = "epsilon" if predict_epsilon else "sample"
             self._internal_dict = FrozenDict(new_config)
 
         t = timestep
@@ -266,10 +278,15 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
 
         # 2. compute predicted original sample from predicted noise also called
         # "predicted x_0" of formula (15) from https://arxiv.org/pdf/2006.11239.pdf
-        if self.config.predict_epsilon:
+        if self.config.prediction_type == "epsilon":
             pred_original_sample = (sample - beta_prod_t ** (0.5) * model_output) / alpha_prod_t ** (0.5)
-        else:
+        elif self.config.prediction_type == "sample":
             pred_original_sample = model_output
+        else:
+            raise ValueError(
+                f"prediction_type given as {self.config.prediction_type} must be one of `epsilon`, `sample` "
+                " for the DDPMScheduler."
+            )
 
         # 3. Clip "predicted x_0"
         if self.config.clip_sample:
