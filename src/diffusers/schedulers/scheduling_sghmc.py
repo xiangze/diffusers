@@ -39,7 +39,7 @@ class SGHMCSchedulerOutput(BaseOutput):
             The predicted denoised sample (x_{0}) based on the model output from the current timestep.
             `pred_original_sample` can be used to preview progress or for guidance.
     """
-
+    momentum: torch.FloatTensor
     prev_sample: torch.FloatTensor
     pred_original_sample: Optional[torch.FloatTensor] = None
 
@@ -322,9 +322,9 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
                 dump_coef= self._get_variance(t, predicted_variance=predicted_variance)
                 variance = (dump_coef ** 0.5) * variance_noise
 
-        # momentum 
-        p= p -dump_coef *p +pred_prev_sample + variance 
-        # no Metropolis selection
+            # momentum 
+            p= p -dump_coef *p +pred_prev_sample + variance 
+            # no Metropolis selection
        
         if not return_dict:
             return (pred_prev_sample,p)

@@ -541,9 +541,7 @@ class StableDiffusionPipeline(DiffusionPipeline):
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
         if(isinstance(self.scheduler,SGHMCScheduler)):
-            p=torch.randn(latents.shape, dtype=latents.dtype, generator=generator)
-            p=p.to(device)
-            
+            p=torch.randn(latents.shape, dtype=latents.dtype, generator=generator).to(device)
 
         # 7. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
