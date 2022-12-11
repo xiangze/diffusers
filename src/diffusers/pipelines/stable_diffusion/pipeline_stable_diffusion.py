@@ -541,7 +541,10 @@ class StableDiffusionPipeline(DiffusionPipeline):
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
         if(isinstance(self.scheduler,SGHMCScheduler)):
-            p=torch.randn(latents.shape, dtype=latents.dtype, generator=generator).to(device)
+            if device.type == "mps":
+                p=torch.randn(latents.shape, dtype=latents.dtype, generator=generator).to(device)
+            else: #cuda
+                p=torch.randn(latents.shape, dtype=latents.dtype, device="cuda",generator=generator)
 
         # 7. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
@@ -561,7 +564,9 @@ class StableDiffusionPipeline(DiffusionPipeline):
 
                     # compute the previous noisy sample x_t -> x_t-1
                     if(isinstance(self.scheduler,SGHMCScheduler)):
-                        latents = self.scheduler.step(noise_pred, t, latents, p, **extra_step_kwargs).prev_sample
+                        q = self.scheduler.step(noise_pred, t, latents, p, **extra_step_kwargs)
+                        latents=q.prev_sample
+                        p=q.momentum
                     else:
                         latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
 

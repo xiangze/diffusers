@@ -119,6 +119,7 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
         variance_type: str = "fixed_small",
         clip_sample: bool = True,
         prediction_type: str = "epsilon",
+        sampler_type:str ="sde_vp",
         **kwargs,
     ):
         message = (
@@ -160,6 +161,40 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
         self.timesteps = torch.from_numpy(np.arange(0, num_train_timesteps)[::-1].copy())
 
         self.variance_type = variance_type
+
+        if(sampler_type=="sde_ve"):
+            sigma_min: float = 0.01,
+            sigma_max: float = 1348.0,
+            sampling_eps: float = 1e-5,
+            self.set_sigmas(num_train_timesteps, sigma_min, sigma_max, sampling_eps)
+
+    def set_sigmas(
+        self, num_inference_steps: int, sigma_min: float = None, sigma_max: float = None, sampling_eps: float = None
+    ):
+        """
+        Sets the noise scales used for the diffusion chain. Supporting function to be run before inference.
+
+        The sigmas control the weight of the `drift` and `diffusion` components of sample update.
+
+        Args:
+            num_inference_steps (`int`):
+                the number of diffusion steps used when generating samples with a pre-trained model.
+            sigma_min (`float`, optional):
+                initial noise scale value (overrides value given at Scheduler instantiation).
+            sigma_max (`float`, optional): final noise scale value (overrides value given at Scheduler instantiation).
+            sampling_eps (`float`, optional): final timestep value (overrides value given at Scheduler instantiation).
+
+        """
+        sigma_min = sigma_min if sigma_min is not None else self.config.sigma_min
+        sigma_max = sigma_max if sigma_max is not None else self.config.sigma_max
+        sampling_eps = sampling_eps if sampling_eps is not None else self.config.sampling_eps
+        if self.timesteps is None:
+            self.set_timesteps(num_inference_steps, sampling_eps)
+
+        self.sigmas = sigma_min * (sigma_max / sigma_min) ** (self.timesteps / sampling_eps)
+        self.discrete_sigmas = torch.exp(torch.linspace(math.log(sigma_min), math.log(sigma_max), num_inference_steps))
+        self.sigmas = torch.tensor([sigma_min * (sigma_max / sigma_min) ** t for t in self.timesteps])
+
 
     def scale_model_input(self, sample: torch.FloatTensor, timestep: Optional[int] = None) -> torch.FloatTensor:
         """
@@ -230,6 +265,10 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
         timestep: int,
         sample: torch.FloatTensor,
         p: torch.FloatTensor=None,
+        s_churn: float = 0.0,
+        s_tmin: float = 0.0,
+        s_tmax: float = float("inf"),
+        s_noise: float = 1.0,
         generator=None,
         return_dict: bool = True,
         **kwargs,
@@ -252,84 +291,164 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
             returning a tuple, the first element is the sample tensor.
 
         """
-        message = (
-            "Please make sure to instantiate your scheduler with `prediction_type` instead. E.g. `scheduler ="
-            " SGHMCScheduler.from_pretrained(<model_id>, prediction_type='epsilon')`."
-        )
-#       predict_epsilon = deprecate("predict_epsilon", "0.10.0", message, take_from=kwargs)
-        predict_epsilon = None
-        if predict_epsilon is not None:
-            new_config = dict(self.config)
-            new_config["predict_type"] = "epsilon" if predict_epsilon else "sample"
-            self._internal_dict = FrozenDict(new_config)
 
-        t = timestep
+        if(self.sampler_type == "euler" or self.sampler_type == "euler_discrete"):
+    ## from euler discrete code
+            if (
+                isinstance(timestep, int)
+                or isinstance(timestep, torch.IntTensor)
+                or isinstance(timestep, torch.LongTensor)
+            ):
+                raise ValueError(
+                    "Passing integer indices (e.g. from `enumerate(timesteps)`) as timesteps to"
+                    " `EulerDiscreteScheduler.step()` is not supported. Make sure to pass"
+                    " one of the `scheduler.timesteps` as a timestep.",
+                )
 
-        if model_output.shape[1] == sample.shape[1] * 2 and self.variance_type in ["learned", "learned_range"]:
-            model_output, predicted_variance = torch.split(model_output, sample.shape[1], dim=1)
-        else:
-            predicted_variance = None
+            if not self.is_scale_input_called:
+                logger.warning(
+                    "The `scale_model_input` function should be called before `step` to ensure correct denoising. "
+                    "See `StableDiffusionPipeline` for a usage example."
+                )
 
-        # 1. compute alphas, betas
-        alpha_prod_t = self.alphas_cumprod[t]
-        alpha_prod_t_prev = self.alphas_cumprod[t - 1] if t > 0 else self.one
-        beta_prod_t = 1 - alpha_prod_t
-        beta_prod_t_prev = 1 - alpha_prod_t_prev
+            if isinstance(timestep, torch.Tensor):
+                timestep = timestep.to(self.timesteps.device)
 
-        # 2. compute predicted original sample from predicted noise also called
-        # "predicted x_0" of formula (15) from https://arxiv.org/pdf/2006.11239.pdf
-        if self.config.prediction_type == "epsilon":
-            pred_original_sample = (sample - beta_prod_t ** (0.5) * model_output) / alpha_prod_t ** (0.5)
-        elif self.config.prediction_type == "sample":
-            pred_original_sample = model_output
-        else:
-            raise ValueError(
-                f"prediction_type given as {self.config.prediction_type} must be one of `epsilon`, `sample` "
-                " for the DDPMScheduler."
-            )
+            step_index = (self.timesteps == timestep).nonzero().item()
+            sigma = self.sigmas[step_index]
 
-        # 3. Clip "predicted x_0"
-        if self.config.clip_sample:
-            pred_original_sample = torch.clamp(pred_original_sample, -1, 1)
+            gamma = min(s_churn / (len(self.sigmas) - 1), 2**0.5 - 1) if s_tmin <= sigma <= s_tmax else 0.0
 
-        # 4. Compute coefficients for pred_original_sample x_0 and current sample x_t
-        # See formula (7) from https://arxiv.org/pdf/2006.11239.pdf
-        pred_original_sample_coeff = (alpha_prod_t_prev ** (0.5) * self.betas[t]) / beta_prod_t
-        current_sample_coeff = self.alphas[t] ** (0.5) * beta_prod_t_prev / beta_prod_t
-
-        # 5. Compute predicted previous sample µ_t
-        # See formula (7) from https://arxiv.org/pdf/2006.11239.pdf
-
-        # position
-        pred_prev_sample = (pred_original_sample_coeff * pred_original_sample + current_sample_coeff * sample )+p
-
-        # 6. Add noise
-        variance = 0
-        if t > 0:
             device = model_output.device
             if device.type == "mps":
                 # randn does not work reproducibly on mps
-                variance_noise = torch.randn(model_output.shape, dtype=model_output.dtype, generator=generator)
-                variance_noise = variance_noise.to(device)
-            else:
-                variance_noise = torch.randn(
-                    model_output.shape, generator=generator, device=device, dtype=model_output.dtype
+                noise = torch.randn(model_output.shape, dtype=model_output.dtype, device="cpu", generator=generator).to(
+                    device
                 )
-            if self.variance_type == "fixed_small_log":
-                dump_coef= self._get_variance(t, predicted_variance=predicted_variance)
-                variance = dump_coef* variance_noise
             else:
-                dump_coef= self._get_variance(t, predicted_variance=predicted_variance)
-                variance = (dump_coef ** 0.5) * variance_noise
+                noise = torch.randn(model_output.shape, dtype=model_output.dtype, device=device, generator=generator).to(
+                    device
+                )
 
-            # momentum 
-            p= p -dump_coef *p +pred_prev_sample + variance 
-            # no Metropolis selection
-       
+            eps = noise * s_noise
+            sigma_hat = sigma * (gamma + 1)
+
+            if gamma > 0:
+                var= eps * (sigma_hat**2 - sigma**2) ** 0.5
+            else:            
+                var = 0
+
+            neps= eps * var
+
+            # 1. compute predicted original sample (x_0) from sigma-scaled predicted noise
+            if self.config.prediction_type == "epsilon":
+                pred_original_sample = sample - sigma_hat * model_output
+            elif self.config.prediction_type == "v_prediction":
+                # * c_out + input * c_skip
+                pred_original_sample = model_output * (-sigma / (sigma**2 + 1) ** 0.5) + (sample / (sigma**2 + 1))
+            else:
+                raise ValueError(
+                    f"prediction_type given as {self.config.prediction_type} must be one of `epsilon`, or `v_prediction`"
+                )
+
+            #sample = sample + neps
+            # 2. Convert to an ODE derivative
+
+            derivative = (sample - pred_original_sample) / sigma_hat
+            dt = self.sigmas[step_index + 1] - sigma_hat
+
+            #momentum
+            prev_p= (derivative -var*p )*dt  + neps
+            #position (mass=1)
+            prev_sample = sample + prev_p*dt
+
+        elif("sde_ve" in self.sampler_type):
+    #from step_pred of sde_ve
+            if self.timesteps is None:
+                    raise ValueError(
+                    "`self.timesteps` is not set, you need to run 'set_timesteps' after creating the scheduler"
+                )
+
+            timestep = timestep * torch.ones(
+                sample.shape[0], device=sample.device
+            )  # torch.repeat_interleave(timestep, sample.shape[0])
+            timesteps = (timestep * (len(self.timesteps) - 1)).long()
+
+            # mps requires indices to be in the same device, so we use cpu as is the default with cuda
+            timesteps = timesteps.to(self.discrete_sigmas.device)
+
+            sigma = self.discrete_sigmas[timesteps].to(sample.device)
+            adjacent_sigma = self.get_adjacent_sigma(timesteps, timestep).to(sample.device)
+            drift = torch.zeros_like(sample)
+            diffusion = (sigma**2 - adjacent_sigma**2) ** 0.5
+
+            # equation 6 in the paper: the model_output modeled by the network is grad_x log pt(x) 
+            # (model_output is score function)
+            # also equation 47 shows the analog from SDE models to ancestral sampling methods
+            diffusion = diffusion.flatten()
+            while len(diffusion.shape) < len(sample.shape):
+                diffusion = diffusion.unsqueeze(-1)
+            drift = drift - diffusion**2 * model_output
+
+            #  equation 6: sample noise for the diffusion term of
+            noise = torch.randn(sample.shape, layout=sample.layout, generator=generator).to(sample.device)
+
+            #prev_sample_mean = sample - drift  # subtract because `dt` is a small negative timestep
+            # TODO is the variable diffusion the correct scaling term for the noise?
+            
+            prev_p=  p - drift - diffusion*diffusion*p + diffusion * noise  # add impact of diffusion field g
+            prev_sample = sample+prev_p
+
+        else: 
+        #from step_pred of sde_vp
+            if self.timesteps is None:
+                raise ValueError(
+                    "`self.timesteps` is not set, you need to run 'set_timesteps' after creating the scheduler"
+                )
+
+            t=timestep
+            pred_original_sample=model_output
+            # TODO(Patrick) better comments + non-PyTorch
+            # postprocess model score
+            log_mean_coeff = (
+                -0.25 * t**2 * (self.betas[-1] - self.betas[0]) - 0.5 * t * self.betas[0]
+#                -0.25 * t**2 * (self.config.beta_max - self.config.beta_min) - 0.5 * t * self.config.beta_min
+            )
+            std = torch.sqrt(1.0 - torch.exp(2.0 * log_mean_coeff))
+            std = std.flatten()
+            while len(std.shape) < len(model_output.shape):
+                std = std.unsqueeze(-1)
+            score_norm = -model_output / std
+
+            # compute
+            dt = -1.0 / len(self.timesteps)
+            beta_t = self.betas[0] + t * (self.betas[-1] - self.betas[0])
+            #beta_t = self.config.beta_min + t * (self.config.beta_max - self.config.beta_min)
+            beta_t = beta_t.flatten()
+            while len(beta_t.shape) < len(sample.shape):
+                beta_t = beta_t.unsqueeze(-1)
+            drift = -0.5 * beta_t * sample
+
+            diffusion = torch.sqrt(beta_t)
+            drift = drift - diffusion**2 * score_norm
+ 
+            # add noise
+            device = model_output.device
+            if device.type == "mps":
+                # randn does not work reproducibly on mps
+                noise = torch.randn(sample.shape, layout=sample.layout, generator=generator).to(device)
+            else:
+                noise = torch.randn(sample.shape, layout=sample.layout, device=device, generator=generator)
+            #p=  p + (drift * dt) - p*dt + diffusion * math.sqrt(-dt) * noise
+            p=  p + (drift * dt) - diffusion*diffusion*p*dt + diffusion * math.sqrt(-dt) * noise
+            prev_sample =sample +p*dt 
+
+            #x_mean = x + drift * dt
+            #x = x_mean + diffusion * math.sqrt(-dt) * noise
         if not return_dict:
-            return (pred_prev_sample,p)
+            return (prev_sample,p)
 
-        return SGHMCSchedulerOutput(prev_sample=pred_prev_sample, momentum=p,pred_original_sample=pred_original_sample)
+        return SGHMCSchedulerOutput(prev_sample=prev_sample, momentum=p,pred_original_sample=pred_original_sample)
 
     def add_noise(
         self,
