@@ -14,6 +14,7 @@
 
 # DISCLAIMER: This file is strongly influenced by https://github.com/ermongroup/ddim
 
+from logging import Logger
 import math
 from dataclasses import dataclass
 from typing import Optional, Tuple, Union
@@ -22,7 +23,7 @@ import numpy as np
 import torch
 
 from ..configuration_utils import ConfigMixin, FrozenDict, register_to_config
-from ..utils import _COMPATIBLE_STABLE_DIFFUSION_SCHEDULERS, BaseOutput, deprecate
+from ..utils import _COMPATIBLE_STABLE_DIFFUSION_SCHEDULERS, BaseOutput, deprecate,logger
 from .scheduling_utils import SchedulerMixin
 
 #logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -332,8 +333,11 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
             returning a tuple, the first element is the sample tensor.
 
         """
+        #### DDPM ####
         if(self.sampler_type == "ddpm" or self.sampler_type == "DDPM"):
             t = timestep
+            dt=1.
+            dump_coef=0.2
 
             if model_output.shape[1] == sample.shape[1] * 2 and self.variance_type in ["learned", "learned_range"]:
                 model_output, predicted_variance = torch.split(model_output, sample.shape[1], dim=1)
@@ -375,7 +379,6 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
 
             # 6. Add noise
             variance = 0
-            dump_coef=0
             if t > 0:
                 device = model_output.device
                 if device.type == "mps":
@@ -387,15 +390,15 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
                         model_output.shape, generator=generator, device=device, dtype=model_output.dtype
                     )
                 if self.variance_type == "fixed_small_log":
-                    dump_coef  =self._get_variance(t, predicted_variance=predicted_variance)
-                    variance =  dump_coef  * variance_noise
+                    variance =  self._get_variance(t, predicted_variance=predicted_variance)  * variance_noise
                 else:
-                    dump_coef  =self._get_variance(t, predicted_variance=predicted_variance)
-                    variance = (dump_coef ** 0.5) * variance_noise
-
-            prev_p= p +dump_coef*((pred_prev_sample-sample) -p + variance)
+                    variance = (self._get_variance(t, predicted_variance=predicted_variance) ** 0.5) * variance_noise
             
+            pdif=((pred_prev_sample-sample) -p + variance)
+            prev_p= p + pdif*dump_coef
             prev_sample= sample+prev_p
+            logger.debug("mean %g,var%g"%(pdif.mean(),pdif.var()))
+            #            from IPython.core.debugger import Pdb; Pdb().set_trace()
             #prev_sample= pred_prev_sample + variance
 
         elif(self.sampler_type == "euler" or self.sampler_type == "euler_discrete"):
@@ -555,7 +558,9 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
         if not return_dict:
             return (prev_sample,prev_p)
 
-        return SGHMCSchedulerOutput(prev_sample=prev_sample, momentum=prev_p,pred_original_sample=pred_original_sample)
+        return SGHMCSchedulerOutput(prev_sample=prev_sample, 
+                                    momentum=prev_p,
+                                    pred_original_sample=pred_original_sample)
 
     def add_noise(
         self,
