@@ -88,8 +88,10 @@ class StableDiffusionPipeline(DiffusionPipeline):
         safety_checker: StableDiffusionSafetyChecker,
         feature_extractor: CLIPFeatureExtractor,
         requires_safety_checker: bool = True,
+        debug:bool=False,
     ):
         super().__init__()
+        self.debug  =debug
 
         if hasattr(scheduler.config, "steps_offset") and scheduler.config.steps_offset != 1:
             deprecation_message = (
@@ -537,46 +539,65 @@ class StableDiffusionPipeline(DiffusionPipeline):
             generator,
             latents,
         )
+        ii=0
 
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
-        if(isinstance(self.scheduler,SGHMCScheduler)):
-            if device.type == "mps":
-                p=torch.randn(latents.shape, dtype=latents.dtype, generator=generator).to(device)
-            else: #cuda
-                p=torch.randn(latents.shape, dtype=latents.dtype, device="cuda",generator=generator)
-
         # 7. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         with self.progress_bar(total=num_inference_steps) as progress_bar:
+
+#            print(timesteps)
             for i, t in enumerate(timesteps):
-                # expand the latents if we are doing classifier free guidance
-                latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                
+                if(isinstance(self.scheduler,SGHMCScheduler)):
+                    if device.type == "mps":
+                        p=torch.randn(latents.shape, dtype=latents.dtype, generator=generator).to(device)
+                    else: #cuda
+                        p=torch.randn(latents.shape, dtype=latents.dtype, device="cuda",generator=generator)
 
-                # predict the noise residual
-                noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=text_embeddings).sample
+                for j in range(10):
+                    # expand the latents if we are doing classifier free guidance
+                    latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                    latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
-                # perform guidance
-                if do_classifier_free_guidance:
-                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+                    # predict the noise residual
+                    noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=text_embeddings).sample
 
-                    # compute the previous noisy sample x_t -> x_t-1
-                    if(isinstance(self.scheduler,SGHMCScheduler)):
-                        q = self.scheduler.step(noise_pred, t, latents, p, **extra_step_kwargs)
-                        latents=q.prev_sample
-                        p=q.momentum
-                    else:
-                        latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
+                    # perform guidance
+                    if do_classifier_free_guidance:
+                        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
-                # call the callback, if provided
-                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
-                    progress_bar.update()
-                    if callback is not None and i % callback_steps == 0:
-                        callback(i, t, latents)
+                        # compute the previous noisy sample x_t -> x_t-1
+                        if(isinstance(self.scheduler,SGHMCScheduler)):
 
+                                q = self.scheduler.step(noise_pred, t, latents, p, **extra_step_kwargs)
+                                latents=q.prev_sample
+                                p=q.momentum
+                        else:
+                            latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
 
+                    # call the callback, if provided
+                    if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
+                        progress_bar.update()
+                        if callback is not None and i % callback_steps == 0:
+                            callback(i, t, latents)
+
+                    #debug
+                    if(self.debug and isinstance(self.scheduler,SGHMCScheduler)):
+                        if(ii%10==0):
+                            imageq = self.decode_latents(latents)
+                            imagep = self.decode_latents(p)
+                #            from IPython.core.debugger import Pdb; Pdb().set_trace()
+                            #image, has_nsfw_concept = self.run_safety_checker(image, device, text_embeddings.dtype)
+                            if output_type == "pil":
+                                imageq = self.numpy_to_pil(imageq)
+                                imagep = self.numpy_to_pil(imagep)
+                            imageq[0].save("temp_img%d.png"%ii)
+                            imagep[0].save("temp_p%d.png"%ii)
+                        ii=ii+1
+                    
             if(lazylogging):     #for time independent PCA
                 logger._log_lantent(latents,i)
             else:
