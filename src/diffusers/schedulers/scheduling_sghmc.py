@@ -337,7 +337,7 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
         if(self.sampler_type == "ddpm" or self.sampler_type == "DDPM"):
             t = timestep
             dt=1.
-            dump_coef=0.2
+            #dump_coef=0.2
 
             if model_output.shape[1] == sample.shape[1] * 2 and self.variance_type in ["learned", "learned_range"]:
                 model_output, predicted_variance = torch.split(model_output, sample.shape[1], dim=1)
@@ -389,16 +389,32 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
                     variance_noise = torch.randn(
                         model_output.shape, generator=generator, device=device, dtype=model_output.dtype
                     )
+
                 if self.variance_type == "fixed_small_log":
-                    variance =  self._get_variance(t, predicted_variance=predicted_variance)  * variance_noise
+                    variance_coef =  self._get_variance(t, predicted_variance=predicted_variance)
                 else:
-                    variance = (self._get_variance(t, predicted_variance=predicted_variance) ** 0.5) * variance_noise
-            
-            pdif=((pred_prev_sample-sample) -p + variance)
-            prev_p= p + pdif*dump_coef
+                    variance_coef = (self._get_variance(t, predicted_variance=predicted_variance) ** 0.5) 
+
+                variance =variance_coef *variance_noise
+            else:
+                variance_coef =0
+                variance =0
+
+#            dump_coef=(variance_coef/2)**2
+#            dump_coef=variance_coef**2
+            dump_coef=1
+            #dump_coef=.04*variance_coef
+            #pdif=((pred_prev_sample-sample)-p)*dump_coef + variance
+            #pdif=variance+pred_prev_sample-sample
+
+            pdif=((pred_prev_sample-sample)-p+ variance)*dump_coef 
+            prev_p= p + pdif
+#            prev_p=pred_prev_sample-sample + variance
             prev_sample= sample+prev_p
-            logger.debug("mean %g,var%g"%(pdif.mean(),pdif.var()))
-            #            from IPython.core.debugger import Pdb; Pdb().set_trace()
+#
+#            print("%d:variance coef %g mean %g,var %g"%(t,variance_coef,pdif.mean(),pdif.var()))
+#            if(torch.isnan(pdif.mean())):
+#                from IPython.core.debugger import Pdb; Pdb().set_trace()
             #prev_sample= pred_prev_sample + variance
 
         elif(self.sampler_type == "euler" or self.sampler_type == "euler_discrete"):
@@ -442,12 +458,14 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
             eps = noise * s_noise
             sigma_hat = sigma * (gamma + 1)
 
+            #sample with noise
             if gamma > 0:
-                var= eps * (sigma_hat**2 - sigma**2) ** 0.5
-            else:            
-                var = 0
+                var=(sigma_hat**2 - sigma**2) ** 0.5
+            else:
+                var=0
 
-            neps= eps * var
+            noise=eps*var
+            sample_with_noise = sample + noise
 
             # 1. compute predicted original sample (x_0) from sigma-scaled predicted noise
             if self.config.prediction_type == "epsilon":
@@ -460,16 +478,28 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
                     f"prediction_type given as {self.config.prediction_type} must be one of `epsilon`, or `v_prediction`"
                 )
 
-            #sample = sample + neps
             # 2. Convert to an ODE derivative
 
+#            derivative = (sample_with_noise - pred_original_sample) / sigma_hat
             derivative = (sample - pred_original_sample) / sigma_hat
             dt = self.sigmas[step_index + 1] - sigma_hat
 
+            """
+            if(var==0):
+                dump_coef=1
+            else:
+                dump_coef=1/(var*var)
+            """
+
+            dump_coef=var*var
             #momentum
-            prev_p= (derivative -var*p )*dt  + neps
-            #position (mass=1)
-            prev_sample = sample + prev_p*dt
+            #prev_p= p + (derivative*dt+ -p + noise*dt )*dump_coef
+            prev_p= p + (derivative*dt -p )*dump_coef + noise*dt
+            # position (mass=1)
+            prev_sample = sample + prev_p
+
+            #prev_sample = sample + noise + derivative * dt
+            #prev_sample = sample_with_noise + derivative * dt
 
         elif("sde_ve" in self.sampler_type):
     #### from step_pred of sde_ve
