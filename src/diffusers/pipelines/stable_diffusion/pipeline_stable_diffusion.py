@@ -547,16 +547,23 @@ class StableDiffusionPipeline(DiffusionPipeline):
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         with self.progress_bar(total=num_inference_steps) as progress_bar:
 
-#            print(timesteps)
-            for i, t in enumerate(timesteps):
-                
+            if(True):
                 if(isinstance(self.scheduler,SGHMCScheduler)):
                     if device.type == "mps":
                         p=torch.randn(latents.shape, dtype=latents.dtype, generator=generator).to(device)
                     else: #cuda
                         p=torch.randn(latents.shape, dtype=latents.dtype, device="cuda",generator=generator)
 
-                for j in range(10):
+#            print(timesteps)
+            for i, t in enumerate(timesteps):
+                if(False):
+                    if(isinstance(self.scheduler,SGHMCScheduler)):
+                        if device.type == "mps":
+                            p=torch.randn(latents.shape, dtype=latents.dtype, generator=generator).to(device)
+                        else: #cuda
+                            p=torch.randn(latents.shape, dtype=latents.dtype, device="cuda",generator=generator)
+
+                for j in range(self.config.inneritenum):
                     # expand the latents if we are doing classifier free guidance
                     latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
                     latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
@@ -584,19 +591,19 @@ class StableDiffusionPipeline(DiffusionPipeline):
                         if callback is not None and i % callback_steps == 0:
                             callback(i, t, latents)
 
-                    #debug
-                    if(self.debug and isinstance(self.scheduler,SGHMCScheduler)):
-                        if(ii%10==0):
-                            imageq = self.decode_latents(latents)
-                            imagep = self.decode_latents(p)
-                #            from IPython.core.debugger import Pdb; Pdb().set_trace()
-                            #image, has_nsfw_concept = self.run_safety_checker(image, device, text_embeddings.dtype)
-                            if output_type == "pil":
-                                imageq = self.numpy_to_pil(imageq)
-                                imagep = self.numpy_to_pil(imagep)
-                            imageq[0].save("temp_img%d.png"%ii)
-                            imagep[0].save("temp_p%d.png"%ii)
-                        ii=ii+1
+                #debug
+                if(self.debug and isinstance(self.scheduler,SGHMCScheduler)):
+                    if(ii%10==0):
+                        imageq = self.decode_latents(latents)
+                        imagep = self.decode_latents(p)
+            #            from IPython.core.debugger import Pdb; Pdb().set_trace()
+                        #image, has_nsfw_concept = self.run_safety_checker(image, device, text_embeddings.dtype)
+                        if output_type == "pil":
+                            imageq = self.numpy_to_pil(imageq)
+                            imagep = self.numpy_to_pil(imagep)
+                        imageq[0].save("temp_img%d.png"%ii)
+                        imagep[0].save("temp_p%d.png"%ii)
+                    ii=ii+1
                     
             if(lazylogging):     #for time independent PCA
                 logger._log_lantent(latents,i)

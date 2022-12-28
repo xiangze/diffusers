@@ -122,6 +122,8 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
         clip_sample: bool = True,
         prediction_type: str = "epsilon",
         sampler_type:str ="sde_vp",
+        dt:float=0.5,
+        dump_coef:float=0.1,
         **kwargs,
     ):
         message = (
@@ -165,9 +167,9 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
         self.variance_type = variance_type
 
         if(sampler_type=="sde_ve"):
-            sigma_min: float = 0.01,
-            sigma_max: float = 1348.0,
-            sampling_eps: float = 1e-5,
+            sigma_min: float = 0.01
+            sigma_max: float = 1348.0
+            sampling_eps: float = 1e-5
             self.set_sigmas(num_train_timesteps, sigma_min, sigma_max, sampling_eps)
         
         if(sampler_type=="euler_discrete"):
@@ -196,10 +198,12 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
         if self.timesteps is None:
             self.set_timesteps(num_inference_steps, sampling_eps)
 
-        self.sigmas = sigma_min * (sigma_max / sigma_min) ** (self.timesteps / sampling_eps)
+        #self.sigmas = sigma_min * (sigma_max / sigma_min) ** (self.timesteps / sampling_eps)
+#        from IPython.core.debugger import Pdb; Pdb().set_trace()
         self.discrete_sigmas = torch.exp(torch.linspace(math.log(sigma_min), math.log(sigma_max), num_inference_steps))
         self.sigmas = torch.tensor([sigma_min * (sigma_max / sigma_min) ** t for t in self.timesteps])
-
+        
+        
 
     def scale_model_input(self, sample: torch.FloatTensor, timestep: Optional[int] = None) -> torch.FloatTensor:
         """
@@ -223,14 +227,15 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
             num_inference_steps (`int`):
                 the number of diffusion steps used when generating samples with a pre-trained model.
         """
-        num_inference_steps = min(self.config.num_train_timesteps, num_inference_steps)
-        self.num_inference_steps = num_inference_steps
-        timesteps = np.arange(
-            0, self.config.num_train_timesteps, self.config.num_train_timesteps // self.num_inference_steps
-        )[::-1].copy()
-        self.timesteps = torch.from_numpy(timesteps).to(device)
+        if(self.sampler_type=="DDPM"):
+            num_inference_steps = min(self.config.num_train_timesteps, num_inference_steps)
+            self.num_inference_steps = num_inference_steps
+            timesteps = np.arange(
+                0, self.config.num_train_timesteps, self.config.num_train_timesteps // self.num_inference_steps
+            )[::-1].copy()
+            self.timesteps = torch.from_numpy(timesteps).to(device)
 
-        if(self.sampler_type=="euler_discrete"):
+        elif(self.sampler_type=="euler_discrete"):
             self.num_inference_steps = num_inference_steps
             timesteps = np.linspace(0, self.config.num_train_timesteps - 1, num_inference_steps, dtype=float)[::-1].copy()
             sigmas = np.array(((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5)
@@ -242,6 +247,10 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
                 self.timesteps = torch.from_numpy(timesteps).to(device, dtype=torch.float32)
             else:
                 self.timesteps = torch.from_numpy(timesteps).to(device=device)
+        elif(self.sampler_type=="euler_discrete"):
+            sampling_eps = sampling_eps if sampling_eps is not None else self.config.sampling_eps
+
+            self.timesteps = torch.linspace(1, sampling_eps, num_inference_steps, device=device)
 
 
     def scale_model_input(
@@ -336,8 +345,8 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
         #### DDPM ####
         if(self.sampler_type == "ddpm" or self.sampler_type == "DDPM"):
             t = timestep
-            dt=1.
-            #dump_coef=0.2
+            dt=self.dt
+            dump_coef=self.dump_coef
 
             if model_output.shape[1] == sample.shape[1] * 2 and self.variance_type in ["learned", "learned_range"]:
                 model_output, predicted_variance = torch.split(model_output, sample.shape[1], dim=1)
@@ -400,17 +409,14 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
                 variance_coef =0
                 variance =0
 
-#            dump_coef=(variance_coef/2)**2
-#            dump_coef=variance_coef**2
-            dump_coef=1
-            #dump_coef=.04*variance_coef
-            #pdif=((pred_prev_sample-sample)-p)*dump_coef + variance
-            #pdif=variance+pred_prev_sample-sample
+            #if(variance_coef!=0):
+            #    dump_coef=1/(variance_coef**2)
 
-            pdif=((pred_prev_sample-sample)-p+ variance)*dump_coef 
-            prev_p= p + pdif
+            #pdif=((pred_prev_sample-sample)-p)*dump_coef + variance
+            pdif=(pred_prev_sample-sample)-p*dump_coef 
+            prev_p= p + pdif*dt + variance*(dump_coef**0.5)*dt
 #            prev_p=pred_prev_sample-sample + variance
-            prev_sample= sample+prev_p
+            prev_sample= sample+prev_p*dt
 #
 #            print("%d:variance coef %g mean %g,var %g"%(t,variance_coef,pdif.mean(),pdif.var()))
 #            if(torch.isnan(pdif.mean())):
@@ -459,13 +465,10 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
             sigma_hat = sigma * (gamma + 1)
 
             #sample with noise
-            if gamma > 0:
-                var=(sigma_hat**2 - sigma**2) ** 0.5
-            else:
-                var=0
+            var=(sigma_hat**2 - sigma**2) ** 0.5
 
-            noise=eps*var
-            sample_with_noise = sample + noise
+            #noise=eps*var
+            #sample_with_noise = sample + noise
 
             # 1. compute predicted original sample (x_0) from sigma-scaled predicted noise
             if self.config.prediction_type == "epsilon":
@@ -484,20 +487,15 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
             derivative = (sample - pred_original_sample) / sigma_hat
             dt = self.sigmas[step_index + 1] - sigma_hat
 
-            """
-            if(var==0):
-                dump_coef=1
-            else:
-                dump_coef=1/(var*var)
-            """
-
             dump_coef=var*var
+            
             #momentum
             #prev_p= p + (derivative*dt+ -p + noise*dt )*dump_coef
-            prev_p= p + (derivative*dt -p )*dump_coef + noise*dt
+            prev_p= p + (derivative -p*dump_coef  + (eps*var))*dt/2
             # position (mass=1)
-            prev_sample = sample + prev_p
+            prev_sample = sample + prev_p*dt/2
 
+            #noise=eps*var
             #prev_sample = sample + noise + derivative * dt
             #prev_sample = sample_with_noise + derivative * dt
 
@@ -507,6 +505,7 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
                     raise ValueError(
                     "`self.timesteps` is not set, you need to run 'set_timesteps' after creating the scheduler"
                 )
+            dt=0.5
 
             timestep = timestep * torch.ones(
                 sample.shape[0], device=sample.device
@@ -515,9 +514,9 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
 
             # mps requires indices to be in the same device, so we use cpu as is the default with cuda
             timesteps = timesteps.to(self.discrete_sigmas.device)
-
-            sigma = self.discrete_sigmas[timesteps].to(sample.device)
-            adjacent_sigma = self.get_adjacent_sigma(timesteps, timestep).to(sample.device)
+            from IPython.core.debugger import Pdb; Pdb().set_trace()
+            sigma = self.discrete_sigmas[timestep].to(sample.device)
+            adjacent_sigma = self.get_adjacent_sigma(timestep, timestep).to(sample.device)
             drift = torch.zeros_like(sample)
             diffusion = (sigma**2 - adjacent_sigma**2) ** 0.5
 
@@ -535,10 +534,10 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
             #prev_sample_mean = sample - drift  # subtract because `dt` is a small negative timestep
             # TODO is the variable diffusion the correct scaling term for the noise?
             
-            prev_p=  p - drift - diffusion*diffusion*p + diffusion * noise  # add impact of diffusion field g
-            prev_sample = sample+prev_p
-
-        else: 
+            prev_p=  p (- drift - diffusion*diffusion*p + diffusion * noise)*dt/2  # add impact of diffusion field g
+            prev_sample = sample+prev_p*dt/2
+            #prev_sample = prev_sample_mean + ((step_size * 2) ** 0.5) * noise
+        elif("sde_vp" in self.sampler_type):
     #### from step_pred of sde_vp
             if self.timesteps is None:
                 raise ValueError(
@@ -585,6 +584,9 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
 
             #x_mean = x + drift * dt
             #x = x_mean + diffusion * math.sqrt(-dt) * noise
+        else: #vanilla
+            pass
+
         if not return_dict:
             return (prev_sample,prev_p)
 
