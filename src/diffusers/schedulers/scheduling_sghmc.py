@@ -409,16 +409,12 @@ class SGHMCScheduler(SchedulerMixin, ConfigMixin):
                 variance_coef =0
                 variance =0
 
-            #if(variance_coef!=0):
-            #    dump_coef=1/(variance_coef**2)
-
-            #pdif=((pred_prev_sample-sample)-p)*dump_coef + variance
             pdif=(pred_prev_sample-sample)-p*dump_coef 
-            prev_p= p + pdif*dt + variance*(dump_coef**0.5)*dt
+            prev_p= p + (pdif + variance*(dump_coef**0.5))*dt
 #            prev_p=pred_prev_sample-sample + variance
             prev_sample= sample+prev_p*dt
 #
-#            print("%d:variance coef %g mean %g,var %g"%(t,variance_coef,pdif.mean(),pdif.var()))
+            print("%d:variance coef %g mean %g,var %g"%(t,variance_coef,pdif.mean(),pdif.var()))
 #            if(torch.isnan(pdif.mean())):
 #                from IPython.core.debugger import Pdb; Pdb().set_trace()
             #prev_sample= pred_prev_sample + variance
