@@ -86,6 +86,7 @@ class StableDiffusionPipeline(DiffusionPipeline):
         safety_checker: StableDiffusionSafetyChecker,
         feature_extractor: CLIPFeatureExtractor,
         requires_safety_checker: bool = True,
+        samplenum:int =1000:
     ):
         super().__init__()
 
@@ -404,6 +405,9 @@ class StableDiffusionPipeline(DiffusionPipeline):
         # scale the initial noise by the standard deviation required by the scheduler
         latents = latents * self.scheduler.init_noise_sigma
         return latents
+    
+    @torch.no_grad()
+    def current(x):
 
     @torch.no_grad()
     def __call__(
@@ -422,6 +426,8 @@ class StableDiffusionPipeline(DiffusionPipeline):
         return_dict: bool = True,
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         callback_steps: Optional[int] = 1,
+        obs= lambda x,xo:(x-xo)/2,
+        current=None
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -516,6 +522,8 @@ class StableDiffusionPipeline(DiffusionPipeline):
 
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
+        TUR_lhs=[]
+        TUR_rhs=[]
 
         # 7. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
@@ -533,8 +541,32 @@ class StableDiffusionPipeline(DiffusionPipeline):
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
                     noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
+
                 # compute the previous noisy sample x_t -> x_t-1
-                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
+                latents beta_t = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
+
+                
+                #compute LHS of TUR: entoropy production= j^T B^{-1} j/p
+                x=xo=latents
+                _lhs=0
+                _var=_r2=0
+                for i in range(self.samplenum):
+                    x=self.sample_inverse(xo,beta_t)
+                    #current=x-xo
+                    _lhs+= torch.dot(current(x,xo),current(x,xo))/beta_t
+                    xo=x
+                #compute RHS of TUR: <R>^2/Var<R> of variable R
+                x=xo=latents
+                _r0=obs(xo,xo)
+                for i in range(self.samplenum):
+                    x=self.sample(xo,beta_t)
+                    _r1 += (obs(x,xo)-_r0)
+                    _r2 += torch.dot((obs(x,xo)-_r0)*(obs(x,xo)-_r0))
+                    xo  =  x
+                _var += (_r2-torch.dot(_r1,_r1)/self.samplenum)/(self.samplenum-1)
+
+                TUR_lhs.append(_lhs)
+                TUR_rhs.append(2*_r2/_var)
 
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
@@ -554,5 +586,8 @@ class StableDiffusionPipeline(DiffusionPipeline):
 
         if not return_dict:
             return (image, has_nsfw_concept)
+        
+        for tur in zip(TUR_lhs,TUR_rhs):
+            print(tur)    
 
-        return StableDiffusionPipelineOutput(images=image, nsfw_content_detected=has_nsfw_concept)
+        return StableDiffusionPipelineOutput(images=image, nsfw_content_detected=has_nsfw_concept),{"LHS":TUR_lhs,"RHS":TUR_rhs}
