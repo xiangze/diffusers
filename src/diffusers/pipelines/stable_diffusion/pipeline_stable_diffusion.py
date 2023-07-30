@@ -86,7 +86,7 @@ class StableDiffusionPipeline(DiffusionPipeline):
         safety_checker: StableDiffusionSafetyChecker,
         feature_extractor: CLIPFeatureExtractor,
         requires_safety_checker: bool = True,
-        samplenum:int =1000:
+        samplenum:int =1000
     ):
         super().__init__()
 
@@ -406,8 +406,8 @@ class StableDiffusionPipeline(DiffusionPipeline):
         latents = latents * self.scheduler.init_noise_sigma
         return latents
     
-    @torch.no_grad()
-    def current(x):
+    #@torch.no_grad()
+    #def current(x):
 
     @torch.no_grad()
     def __call__(
@@ -543,8 +543,8 @@ class StableDiffusionPipeline(DiffusionPipeline):
 
 
                 # compute the previous noisy sample x_t -> x_t-1
-                latents beta_t = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
-
+                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
+                beta_t=self.scheduler.betas[t]
                 
                 #compute LHS of TUR: entoropy production= j^T B^{-1} j/p
                 x=xo=latents
